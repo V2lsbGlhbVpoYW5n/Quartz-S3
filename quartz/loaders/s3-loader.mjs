@@ -16,6 +16,12 @@ function normalizePrefix(prefix = "") {
   return prefix.endsWith("/") ? prefix : `${prefix}/`
 }
 
+function getMaxFileSizeBytes() {
+  const parsed = Number(process.env.S3_MAX_FILE_SIZE_BYTES || String(24 * 1024 * 1024))
+  if (!Number.isFinite(parsed) || parsed <= 0) return 24 * 1024 * 1024
+  return parsed
+}
+
 export default async function loadFromS3({ argv, cwd }) {
   const bucket = process.env.S3_BUCKET
   if (!bucket) {
@@ -36,6 +42,7 @@ export default async function loadFromS3({ argv, cwd }) {
   const endpoint = process.env.S3_ENDPOINT || undefined
   const forcePathStyle = (process.env.S3_FORCE_PATH_STYLE || "false").toLowerCase() === "true"
   const cleanContent = (process.env.S3_CLEAN_CONTENT || "true").toLowerCase() !== "false"
+  const maxFileSizeBytes = getMaxFileSizeBytes()
 
   const contentDir = path.isAbsolute(argv.directory)
     ? argv.directory
@@ -59,6 +66,7 @@ export default async function loadFromS3({ argv, cwd }) {
 
   let token = undefined
   let downloaded = 0
+  let skipped = 0
   let page = 0
 
   console.log(
@@ -76,13 +84,22 @@ export default async function loadFromS3({ argv, cwd }) {
     )
 
     const objects = listResp.Contents || []
-    console.log(`S3 loader page ${page}: ${objects.length} objects`) 
+    console.log(`S3 loader page ${page}: ${objects.length} objects`)
     for (const obj of objects) {
       const key = obj.Key
       if (!key || key.endsWith("/")) continue
 
       const relativePath = prefix ? key.slice(prefix.length) : key
       if (!relativePath || relativePath.startsWith("../")) continue
+
+      const size = obj.Size ?? 0
+      if (size > maxFileSizeBytes) {
+        skipped += 1
+        console.log(
+          `S3 loader skip: ${key} is ${(size / 1024 / 1024).toFixed(1)} MiB, exceeds limit ${(maxFileSizeBytes / 1024 / 1024).toFixed(1)} MiB`,
+        )
+        continue
+      }
 
       const outputPath = path.join(contentDir, relativePath)
       await mkdir(path.dirname(outputPath), { recursive: true })
@@ -103,5 +120,7 @@ export default async function loadFromS3({ argv, cwd }) {
     token = listResp.NextContinuationToken
   } while (token)
 
-  console.log(`S3 loader finished: downloaded ${downloaded} objects into ${contentDir}`)
+  console.log(
+    `S3 loader finished: downloaded ${downloaded} objects, skipped ${skipped} oversized objects into ${contentDir}`,
+  )
 }
