@@ -22,6 +22,15 @@ export default async function loadFromS3({ argv, cwd }) {
     throw new Error("Missing required env var: S3_BUCKET")
   }
 
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
+  const sessionToken = process.env.AWS_SESSION_TOKEN
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error(
+      "Missing AWS credentials. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your build environment.",
+    )
+  }
+
   const region = process.env.AWS_REGION || "us-east-1"
   const prefix = normalizePrefix(process.env.S3_PREFIX || "")
   const endpoint = process.env.S3_ENDPOINT || undefined
@@ -36,6 +45,11 @@ export default async function loadFromS3({ argv, cwd }) {
     region,
     endpoint,
     forcePathStyle,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      ...(sessionToken ? { sessionToken } : {}),
+    },
   })
 
   if (cleanContent) {
@@ -45,8 +59,14 @@ export default async function loadFromS3({ argv, cwd }) {
 
   let token = undefined
   let downloaded = 0
+  let page = 0
+
+  console.log(
+    `S3 loader start: bucket=${bucket}, prefix=${prefix || "(root)"}, endpoint=${endpoint || "(aws default)"}`,
+  )
 
   do {
+    page += 1
     const listResp = await client.send(
       new ListObjectsV2Command({
         Bucket: bucket,
@@ -56,6 +76,7 @@ export default async function loadFromS3({ argv, cwd }) {
     )
 
     const objects = listResp.Contents || []
+    console.log(`S3 loader page ${page}: ${objects.length} objects`) 
     for (const obj of objects) {
       const key = obj.Key
       if (!key || key.endsWith("/")) continue
