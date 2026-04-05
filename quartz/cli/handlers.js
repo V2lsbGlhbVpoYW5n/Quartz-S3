@@ -13,6 +13,7 @@ import http from "http"
 import serveHandler from "serve-handler"
 import { WebSocketServer } from "ws"
 import { randomUUID } from "crypto"
+import { pathToFileURL } from "url"
 import { Mutex } from "async-mutex"
 import { CreateArgv } from "./args.js"
 import { globby } from "globby"
@@ -40,6 +41,38 @@ import {
 function resolveContentPath(contentPath) {
   if (path.isAbsolute(contentPath)) return path.relative(cwd, contentPath)
   return path.join(cwd, contentPath)
+}
+
+async function runBuildLoader(loaderPathArg, argv) {
+  const fullLoaderPath = path.isAbsolute(loaderPathArg)
+    ? loaderPathArg
+    : path.resolve(cwd, loaderPathArg)
+
+  if (!fs.existsSync(fullLoaderPath)) {
+    console.log(styleText("red", `Build loader not found: ${fullLoaderPath}`))
+    process.exit(1)
+  }
+
+  const loaderUrl = pathToFileURL(fullLoaderPath).href
+  const imported = await import(`${loaderUrl}?update=${randomUUID()}`)
+  const loader = imported.default ?? imported.load
+
+  if (typeof loader !== "function") {
+    console.log(
+      styleText(
+        "red",
+        `Build loader must export a function as default export (or named export \`load\`): ${fullLoaderPath}`,
+      ),
+    )
+    process.exit(1)
+  }
+
+  console.log(styleText("cyan", `Running build loader: ${loaderPathArg}`))
+  await loader({
+    argv,
+    cwd,
+    resolveContentPath,
+  })
 }
 
 /**
@@ -233,6 +266,10 @@ See the [documentation](https://quartz.jzhao.xyz) for how to get started.
  * @param {*} argv arguments for `build`
  */
 export async function handleBuild(argv) {
+  if (argv.loader) {
+    await runBuildLoader(argv.loader, argv)
+  }
+
   if (argv.serve) {
     argv.watch = true
   }

@@ -60,6 +60,11 @@ export const SyncArgv = {
 
 export const BuildArgv = {
   ...CommonArgv,
+  loader: {
+    string: true,
+    describe:
+      "optional path to a JS/TS module that runs before build (default export should be an async function)",
+  },
   output: {
     string: true,
     alias: ["o"],
